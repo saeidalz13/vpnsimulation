@@ -4,6 +4,14 @@ Simulation of a VPN application using Golang.
 
 ## How to use
 
+__FIRST:__ 
+1. Run `netstat -nr | grep default`. You should see something like this (your broadcast en0 will be a address and NOT 000.000.0.000): 
+```bash
+default            000.000.0.000      UGScg                 en0 
+```
+Remember this address so you can revert the setting since this app might tamper with your network configurations.
+
+
 Before running the application there are certain settngs that need to be configured.
 __NOTE: Instruction for Windows and Linux not available at the time.__
 
@@ -19,3 +27,6 @@ __NOTE: Instruction for Windows and Linux not available at the time.__
         - we're saying whatever data/packets received from or sent to your machine would directly go into this Go client app
         - basically, you have rerouted the traffic of your machine to go through this app
 
+## To revert to default network settings
+1. Stop the client Go app.
+2. Run `sudo route add default 000.000.0.000` (000.000.0.000 is the address unique to you and your Mac machine)
