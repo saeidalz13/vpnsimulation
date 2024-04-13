@@ -19,7 +19,8 @@ __NOTE: Instruction for Windows and Linux not available at the time.__
 
 1. Run the server code in its own terminal.
 2. Run the client code in its own terminal.
-3. After running the client code, a new network tunnel is created with the name `utun13`. This tunnel needs to be added to the routes on your machine network table. To do so, you need to do the following step:
+3. Run `sudo route delete default` to delete your default en0 gateway.
+4. After running the client code, a new network tunnel is created with the name `utun13`. This tunnel needs to be added to the routes on your machine network table. To do so, you need to do the following step:
     a. Run command `sudo ifconfig utun13 inet 10.0.0.1 10.0.0.2 up`
         - `10.0.0.1` is your local machine
         - `10.0.0.2` is the IP of this application, and set the flag up so it's up and running
