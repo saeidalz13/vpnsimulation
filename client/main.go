@@ -28,6 +28,7 @@ func main() {
 		// since this is a simulation and server is known, it's ok to set it to true
 		InsecureSkipVerify: true,
 	}
+
 	// connecting to the server
 	conn, err := tls.Dial("tcp", "localhost:8000", config)
 	if err != nil {
@@ -89,6 +90,5 @@ func main() {
 		}
 
 		log.Println(respBuff[:n])
-
 	}
 }

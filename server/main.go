@@ -53,34 +53,44 @@ func insertConnToDb(db *sql.DB, remoteAddr string) error {
 func handlePacketRouting(conn net.Conn, ip *layers.IPv4, tcp *layers.TCP, payload []byte) error {
 	dstAddr := fmt.Sprintf("%s:%d", ip.DstIP, tcp.DstPort)
 	dialer := net.Dialer{}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
 
-	connReq, err := dialer.DialContext(ctx, "tcp", dstAddr)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	defer connReq.Close()
+	if ip.Protocol.String() == "TCP" {
+		log.Println("TCP packet received; dialing destination PORT:IP...")
 
-	// sending the payload to the destination
-	log.Println("writing data to packet destination connection")
-	_, err = connReq.Write(payload)
-	if err != nil {
-		log.Printf("Failed to write payload to connection %s: %v", dstAddr, err)
-		return err
+		// TODO: Attempt a tcp connection every time, Overhead is an issue here; connection pool should be made
+		connReq, err := dialer.DialContext(ctx, "tcp", dstAddr)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		defer connReq.Close()
+	
+		// sending the payload to the destination
+		log.Println("writing data to packet destination connection")
+		_, err = connReq.Write(payload)
+		if err != nil {
+			log.Printf("Failed to write payload to connection %s: %v", dstAddr, err)
+			return err
+		}
+	
+		// handling the response
+		respBuff := make([]byte, 4096)
+		n, err := connReq.Read(respBuff)
+		if err != nil {
+			log.Printf("Failed to get the response from the connection %s: %v", dstAddr, err)
+			return err
+		}
+	
+		// writing response to VPN client
+		_, err = conn.Write(respBuff[:n])
+		if err != nil {
+			log.Printf("Failed to send response back to client: %v", err)
+			return err
+		}
 	}
-
-	// handling the response
-	respBuff := make([]byte, 4096)
-	n, err := connReq.Read(respBuff)
-	if err != nil {
-		log.Printf("Failed to get the response from the connection %s: %v", dstAddr, err)
-		return err
-	}
-
-	// writing response to VPN client
-	_, err = conn.Write(respBuff[:n])
+	_, err := conn.Write([]byte("Unsupported protocol"))
 	if err != nil {
 		log.Printf("Failed to send response back to client: %v", err)
 		return err
