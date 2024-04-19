@@ -50,31 +50,39 @@ func insertConnToDb(db *sql.DB, remoteAddr string) error {
 	return nil
 }
 
-func handlePacketRouting(conn net.Conn, ip *layers.IPv4, tcp *layers.TCP, payload []byte) error {
-	dstAddr := fmt.Sprintf("%s:%d", ip.DstIP, tcp.DstPort)
-	dialer := net.Dialer{}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-	defer cancel()
+func handlePacketRouting(conn net.Conn, innerPacket []byte) error {
+	packetData := gopacket.NewPacket(innerPacket, layers.LayerTypeIPv4, gopacket.Default)
+	ipLayer := packetData.Layer(layers.LayerTypeIPv4)
+	if ipLayer == nil {
+		return fmt.Errorf("no ip layer found in the inner packet")
+	}
+	ipv4, _ := ipLayer.(*layers.IPv4)
 
-	if ip.Protocol.String() == "TCP" {
+	packetTcp := gopacket.NewPacket(innerPacket, layers.LayerTypeTCP, gopacket.Default)
+	if tcpLayer := packetTcp.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+		tcp, _ := tcpLayer.(*layers.TCP)
+		dstAddr := fmt.Sprintf("%s:%d", ipv4.DstIP, tcp.DstPort)
+
+		dialer := net.Dialer{}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+		defer cancel()
 		log.Println("TCP packet received; dialing destination PORT:IP...")
 
 		// TODO: Attempt a tcp connection every time, Overhead is an issue here; connection pool should be made
 		connReq, err := dialer.DialContext(ctx, "tcp", dstAddr)
 		if err != nil {
-			log.Println(err)
 			return err
 		}
 		defer connReq.Close()
-	
+
 		// sending the payload to the destination
 		log.Println("writing data to packet destination connection")
-		_, err = connReq.Write(payload)
+		_, err = connReq.Write(tcp.Payload)
 		if err != nil {
 			log.Printf("Failed to write payload to connection %s: %v", dstAddr, err)
 			return err
 		}
-	
+
 		// handling the response
 		respBuff := make([]byte, 4096)
 		n, err := connReq.Read(respBuff)
@@ -82,14 +90,47 @@ func handlePacketRouting(conn net.Conn, ip *layers.IPv4, tcp *layers.TCP, payloa
 			log.Printf("Failed to get the response from the connection %s: %v", dstAddr, err)
 			return err
 		}
-	
-		// writing response to VPN client
+
 		_, err = conn.Write(respBuff[:n])
 		if err != nil {
 			log.Printf("Failed to send response back to client: %v", err)
 			return err
 		}
+		return nil
 	}
+
+	packetUdp := gopacket.NewPacket(innerPacket, layers.LayerTypeUDP, gopacket.Default)
+	if udpLayer := packetUdp.Layer(layers.LayerTypeUDP); udpLayer != nil {
+		log.Println("UDP packet received; sending datagrams to destination PORT:IP...")
+		udp, _ := udpLayer.(*layers.UDP)
+		dstAddr := fmt.Sprintf("%s:%d", ipv4.DstIP, udp.DstPort)
+
+		dialer := net.Dialer{}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+		defer cancel()
+
+		udpConn, err := dialer.DialContext(ctx, "udp", dstAddr)
+		if err != nil {
+			return err
+		}
+		_, err = udpConn.Write(udp.Payload)
+		if err != nil {
+			return err
+		}
+
+		respBuff := make([]byte, 4096)
+		n, err := udpConn.Read(respBuff)
+		if err != nil {
+			return err
+		}
+
+		_, err = conn.Write(respBuff[:n])
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
 	_, err := conn.Write([]byte("Unsupported protocol"))
 	if err != nil {
 		log.Printf("Failed to send response back to client: %v", err)
@@ -157,29 +198,28 @@ func (t *TCPServer) ManageConn(conn net.Conn) {
 			continue
 		}
 
-		packetData := gopacket.NewPacket(packet[:n], layers.LayerTypeIPv4, gopacket.Default)
-		ipLayer := packetData.Layer(layers.LayerTypeIPv4)
-		if ipLayer == nil {
-			continue
-		}
-
 		packetTcp := gopacket.NewPacket(packet[:n], layers.LayerTypeTCP, gopacket.Default)
 		tcpLayer := packetTcp.Layer(layers.LayerTypeTCP)
 		if tcpLayer == nil {
 			continue
 		}
-
-		// logging the incoming packets
-		ip, _ := ipLayer.(*layers.IPv4)
 		tcp, _ := tcpLayer.(*layers.TCP)
-		if err := handlePacketRouting(conn, ip, tcp, tcp.Payload); err != nil {
+		innerPacket := tcp.Payload
+
+		if err := handlePacketRouting(conn, innerPacket); err != nil {
 			// error or not, after this line the loop should continue
+			log.Println(err)
 			conn.Write([]byte("Failed to send packet to destination"))
 		}
 
 		// log.Printf("Source IP: %s | IP Dest: %s", ip.SrcIP, ip.DstIP)
 		// log.Printf("TCP Source Port: %s | TCP Dest PORT: %s", tcp.SrcPort, tcp.DstPort)
 
+		// packetData := gopacket.NewPacket(packet[:n], layers.LayerTypeIPv4, gopacket.Default)
+		// ipLayer := packetData.Layer(layers.LayerTypeIPv4)
+		// if ipLayer == nil {
+		// 	continue
+		// }
 		// TODO: Encryption
 		// encData, err := EncryptData(gcm, srcBuff)
 		// if err != nil {
@@ -221,7 +261,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("listening to port %d ...", *tcpServerOption.Port)
+	log.Printf("listening to port %d...", *tcpServerOption.Port)
 
 	// accepting connections
 	tcpServer := &TCPServer{

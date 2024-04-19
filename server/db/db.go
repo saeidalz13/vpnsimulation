@@ -63,5 +63,7 @@ func MustConnectToPsql(psqlUrl string) *sql.DB {
 
 	// migrate
 	mustExecMigrations(db, "file:db/migration")
+
+	log.Println("connected to database...")
 	return db
 }
